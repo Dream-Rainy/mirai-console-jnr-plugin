@@ -5,8 +5,6 @@ import net.mamoe.mirai.console.plugin.jvm.JvmPluginDescription
 import net.mamoe.mirai.console.plugin.jvm.KotlinPlugin
 import net.mamoe.mirai.contact.Contact
 import net.mamoe.mirai.contact.Group
-import net.mamoe.mirai.contact.Member
-import net.mamoe.mirai.contact.nameCardOrNick
 import net.mamoe.mirai.event.EventPriority
 import net.mamoe.mirai.event.events.NudgeEvent
 import net.mamoe.mirai.event.globalEventChannel
@@ -30,8 +28,10 @@ object JNudgeReply : KotlinPlugin(
         info("""自定义戳一戳回复插件""")
     }
 ) {
-    private val groupLastReply = mutableMapOf<Long, LocalDateTime>()
-    private val userLastReply = mutableMapOf<Long, LocalDateTime>()
+    private val groupCoolDownTime = mutableMapOf<Long, LocalDateTime>()
+    private var jnrcount = 1
+    private var cooldowntime = (5..12).random()
+    private var isReply = true //是否回复
 
     override fun onEnable() {
         JNRPluginConfig.reload()
@@ -39,32 +39,27 @@ object JNudgeReply : KotlinPlugin(
 
         globalEventChannel().subscribeAlways<NudgeEvent>(priority = JNRPluginConfig.priority) {
             if (target.id == bot.id && target.id != from.id && JNRPluginConfig.replyMessageList.isNotEmpty()) {
-                var replyList: List<ReplyMessage> = JNRPluginConfig.replyMessageList
-                val now = LocalDateTime.now()
-                var isReply = true
-                if (subject !is Group) {
-                    if (JNRPluginConfig.userInterval > 0) {
-                        val t = userLastReply[subject.id]
-                        if (t == null || t.plusSeconds(JNRPluginConfig.userInterval) < now) {
-                            userLastReply[subject.id] = now
-                        } else {
+                val replyList: List<ReplyMessage> = JNRPluginConfig.replyMessageList //获取回复消息
+                val now = LocalDateTime.now() //判断间隔
+                if (subject is Group) {
+                    val randomnumber = (0..10).random()
+                    if (!isReply && (groupCoolDownTime[subject.id]?.plusMinutes(cooldowntime.toLong())!! > now)){
+                        logger.info("cd中，跳过")
+                    }else if (((randomnumber >= 7 && jnrcount >= 5) || (jnrcount >= 12)) && (groupCoolDownTime[subject.id] == null)){
+                            logger.info("2")
+                            groupCoolDownTime[subject.id] = now
                             isReply = false
-                        }
+                            jnrcount = 1
+                            val s = "呜呜，被戳傻了。休息"+cooldowntime.toString()+"分钟"
+                            sendRecordMessage(this.subject,s.deserializeMiraiCode())
+                    } else {
+                        jnrcount += 1
+                        cooldowntime = (5..12).random()
+                        isReply = true
                     }
-                    replyList = replyList.filter { !it.message.startsWith("#group") }
-                } else {
-                    if (JNRPluginConfig.groupInterval > 0) {
-                        val t = groupLastReply[subject.id]
-                        if (t == null || t.plusSeconds(JNRPluginConfig.groupInterval) < now) {
-                            groupLastReply[subject.id] = now
-                        } else {
-                            isReply = false
-                        }
-                    }
-                    if ((from as Member).permission.level >= (subject as Group).botPermission.level) {
+                    /*if ((from as Member).permission.level >= (subject as Group).botPermission.level) {
                         replyList = replyList.filter { !it.message.startsWith("#group.mute:") }
-                    }
-                }
+                    }*/
 
                 // 判断间隔
                 val isIgnored = if (isReply) {
@@ -96,18 +91,21 @@ object JNudgeReply : KotlinPlugin(
 
         logger.info { "Plugin loaded. https://github.com/jie65535/mirai-console-jnr-plugin" }
     }
+    }
 
     private suspend fun doReply(message: ReplyMessage, event: NudgeEvent) {
         if (message.message.startsWith("#")) {
             when {
                 // 戳回去
-                message.message == "#nudge" -> {
+                RegexMatches.main(message.message) -> {
                     event.from.nudge().sendTo(event.subject)
+                    val messagetemp = message.message.substring(6);
+                    sendRecordMessage(event.subject, messagetemp.deserializeMiraiCode())
                     logger.info("已尝试戳回发送者")
                 }
 
                 // 禁言
-                message.message.startsWith("#group.mute:") -> {
+               /* message.message.startsWith("#group.mute:") -> {
                     val duration = message.message.substringAfter(':').toIntOrNull()
                     if (duration == null) {
                         logger.warning("戳一戳禁言失败：\"${message.message}\" 格式不正确")
@@ -120,13 +118,13 @@ object JNudgeReply : KotlinPlugin(
                             logger.warning("戳一戳禁言失败", e)
                         }
                     }
-                }
+                }*/
 
                 // 忽略
-                message.message == "#ignore" -> {
+                /* message.message == "#ignore" -> {
                     logger.info("已忽略本次戳一戳回复")
                 }
-
+                */
                 // 其它
                 else -> sendRecordMessage(event.subject, message.message.deserializeMiraiCode())
             }
@@ -154,5 +152,13 @@ object JNudgeReply : KotlinPlugin(
             }
         }
         subject.sendMessage(message)
+    }
+
+    object RegexMatches {
+        @JvmStatic
+        fun main(args: String): Boolean {
+            val regex = "#nudge".toRegex()
+            return regex.containsMatchIn(input = args)
+        }
     }
 }

@@ -38,15 +38,17 @@ object JNRPluginConfig : AutoSavePluginConfig("jnr") {
      * 群间隔时间（单位秒）
      * 0 表示无限制
      */
+/*
     @ValueDescription("群回复间隔（秒），0表示无限制")
     var groupInterval: Long by value(0L)
+*/
 
     /**
      * 用户间隔（单位秒）
      * 0 表示无限制
      */
-    @ValueDescription("用户私聊回复间隔（秒），0表示无限制")
-    var userInterval: Long by value(0L)
+    /*@ValueDescription("用户私聊回复间隔（秒），0表示无限制")
+    var userInterval: Long by value(0L)*/
 
     /**
      * 是否在间隔期间依然拦截事件，与 [isIntercept] 有关
