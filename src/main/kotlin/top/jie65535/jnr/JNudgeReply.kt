@@ -29,8 +29,8 @@ object JNudgeReply : KotlinPlugin(
     }
 ) {
     private val groupCoolDownTime = mutableMapOf<Long, LocalDateTime>()
-    private var jnrcount = 1
-    private var cooldowntime = (5..12).random()
+    private var jnrCount = 1
+    private var coolDownTime = (5..12).random()
     private var isReply = true //是否回复
 
     override fun onEnable() {
@@ -42,19 +42,20 @@ object JNudgeReply : KotlinPlugin(
                 val replyList: List<ReplyMessage> = JNRPluginConfig.replyMessageList //获取回复消息
                 val now = LocalDateTime.now() //判断间隔
                 if (subject is Group) {
-                    val randomnumber = (0..10).random()
-                    if (!isReply && (groupCoolDownTime[subject.id]?.plusMinutes(cooldowntime.toLong())!! > now)){
+                    val randomNumber = (0..10).random()
+                    if (groupCoolDownTime[subject.id] == null)
+                        groupCoolDownTime[subject.id] = now
+                    if (!isReply && (groupCoolDownTime[subject.id]?.plusMinutes(coolDownTime.toLong())!! > now)){
                         logger.info("cd中，跳过")
-                    }else if (((randomnumber >= 7 && jnrcount >= 5) || (jnrcount >= 12)) && (groupCoolDownTime[subject.id] == null)){
-                            logger.info("2")
+                    }else if ((randomNumber >= 6 && jnrCount >= 5) || (jnrCount >= 12)){
                             groupCoolDownTime[subject.id] = now
                             isReply = false
-                            jnrcount = 1
-                            val s = "呜呜，被戳傻了。休息"+cooldowntime.toString()+"分钟"
+                            jnrCount = 1
+                            val s = "呜呜，被戳傻了。休息"+coolDownTime.toString()+"分钟"
                             sendRecordMessage(this.subject,s.deserializeMiraiCode())
                     } else {
-                        jnrcount += 1
-                        cooldowntime = (5..12).random()
+                        jnrCount += 1
+                        coolDownTime = (5..12).random()
                         isReply = true
                     }
                     /*if ((from as Member).permission.level >= (subject as Group).botPermission.level) {
@@ -99,8 +100,8 @@ object JNudgeReply : KotlinPlugin(
                 // 戳回去
                 RegexMatches.main(message.message) -> {
                     event.from.nudge().sendTo(event.subject)
-                    val messagetemp = message.message.substring(6);
-                    sendRecordMessage(event.subject, messagetemp.deserializeMiraiCode())
+                    val messageTemp = message.message.substring(6)
+                    sendRecordMessage(event.subject, messageTemp.deserializeMiraiCode())
                     logger.info("已尝试戳回发送者")
                 }
 
