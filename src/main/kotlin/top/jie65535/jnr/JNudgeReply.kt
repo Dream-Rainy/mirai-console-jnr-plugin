@@ -5,6 +5,8 @@ import net.mamoe.mirai.console.plugin.jvm.JvmPluginDescription
 import net.mamoe.mirai.console.plugin.jvm.KotlinPlugin
 import net.mamoe.mirai.contact.Contact
 import net.mamoe.mirai.contact.Group
+import net.mamoe.mirai.contact.Member
+import net.mamoe.mirai.contact.nameCardOrNick
 import net.mamoe.mirai.event.EventPriority
 import net.mamoe.mirai.event.events.NudgeEvent
 import net.mamoe.mirai.event.globalEventChannel
@@ -28,10 +30,13 @@ object JNudgeReply : KotlinPlugin(
         info("""自定义戳一戳回复插件""")
     }
 ) {
+    private val groupLastReply = mutableMapOf<Long, LocalDateTime>()
+    private val userLastReply = mutableMapOf<Long, LocalDateTime>()
+    private var groupJnrCount = mutableMapOf<Long, Long>()
+    private var coolDownTime = (JNRPluginConfig.groupCoolDownTimeLowerBound..JNRPluginConfig.groupCoolDownTimeUpperBound).random().toInt()
+    private var isReply = true
     private val groupCoolDownTime = mutableMapOf<Long, LocalDateTime>()
-    private var jnrCount = 1
-    private var coolDownTime = (5..12).random()
-    private var isReply = true //是否回复
+    private var groupCountingInterval = mutableMapOf<Long, LocalDateTime>()
 
     override fun onEnable() {
         JNRPluginConfig.reload()
@@ -39,28 +44,56 @@ object JNudgeReply : KotlinPlugin(
 
         globalEventChannel().subscribeAlways<NudgeEvent>(priority = JNRPluginConfig.priority) {
             if (target.id == bot.id && target.id != from.id && JNRPluginConfig.replyMessageList.isNotEmpty()) {
-                val replyList: List<ReplyMessage> = JNRPluginConfig.replyMessageList //获取回复消息
-                val now = LocalDateTime.now() //判断间隔
-                if (subject is Group) {
-                    val randomNumber = (0..10).random()
-                    if (groupCoolDownTime[subject.id] == null)
-                        groupCoolDownTime[subject.id] = now
-                    if (!isReply && (groupCoolDownTime[subject.id]?.plusMinutes(coolDownTime.toLong())!! > now)){
-                        logger.info("cd中，跳过")
-                    }else if ((randomNumber >= 6 && jnrCount >= 5) || (jnrCount >= 12)){
+                var replyList: List<ReplyMessage> = JNRPluginConfig.replyMessageList
+                val now = LocalDateTime.now()
+                if (subject !is Group) {
+                    if (JNRPluginConfig.userInterval > 0) {
+                        val t = userLastReply[subject.id]
+                        if (t == null || t.plusSeconds(JNRPluginConfig.userInterval) < now) {
+                            userLastReply[subject.id] = now
+                        } else {
+                            isReply = false
+                        }
+                    }
+                    replyList = replyList.filter { !it.message.startsWith("#group") }
+                } else {
+                    if (JNRPluginConfig.groupInterval > 0) {
+                        val t = groupLastReply[subject.id]
+                        if (t == null || t.plusSeconds(JNRPluginConfig.groupInterval) < now) {
+                            groupLastReply[subject.id] = now
+                        } else {
+                            isReply = false
+                        }
+                    } else if (JNRPluginConfig.groupCoolDownTimeUpperBound > 0) {
+                        val randomNumber = (1..100).random()
+                        if (groupCoolDownTime[subject.id] == null) {
+                            groupCoolDownTime[subject.id] = now
+                            groupJnrCount[subject.id] = 1
+                            groupCountingInterval[subject.id] = now
+                        }
+                        if (JNRPluginConfig.groupCoolDownInterval != 0L && groupCountingInterval[subject.id]?.plusMinutes(JNRPluginConfig.groupCoolDownInterval)!! <= now){
+                            groupJnrCount[subject.id] = 1
+                            groupCountingInterval[subject.id] = now
+                        }
+                        if (!isReply && (groupCoolDownTime[subject.id]?.plusMinutes(coolDownTime.toLong())!! > now)){
+                            logger.info("cd中，跳过")
+                        }else if ((randomNumber <= JNRPluginConfig.groupCoolDownTriggerProbability && groupJnrCount[subject.id]!! >= JNRPluginConfig.groupCoolDownTriggerCountMin) || (groupJnrCount[subject.id]!! >= JNRPluginConfig.groupCoolDownTriggerCountMax)){
                             groupCoolDownTime[subject.id] = now
                             isReply = false
-                            jnrCount = 1
-                            val s = "呜呜，被戳傻了。休息"+coolDownTime.toString()+"分钟"
+                            groupJnrCount[subject.id] = 1
+                            groupCountingInterval[subject.id] = now
+                            val s = String.format(JNRPluginConfig.replyMessageForRest, coolDownTime.toString())
                             sendRecordMessage(this.subject,s.deserializeMiraiCode())
-                    } else {
-                        jnrCount += 1
-                        coolDownTime = (5..12).random()
-                        isReply = true
+                        } else {
+                            groupJnrCount[subject.id] = groupJnrCount[subject.id]!! + 1
+                            coolDownTime = (JNRPluginConfig.groupCoolDownTimeLowerBound..JNRPluginConfig.groupCoolDownTimeUpperBound).random().toInt()
+                            isReply = true
+                        }
                     }
-                    /*if ((from as Member).permission.level >= (subject as Group).botPermission.level) {
+                    if ((from as Member).permission.level >= (subject as Group).botPermission.level) {
                         replyList = replyList.filter { !it.message.startsWith("#group.mute:") }
-                    }*/
+                    }
+                }
 
                 // 判断间隔
                 val isIgnored = if (isReply) {
@@ -92,21 +125,22 @@ object JNudgeReply : KotlinPlugin(
 
         logger.info { "Plugin loaded. https://github.com/jie65535/mirai-console-jnr-plugin" }
     }
-    }
 
     private suspend fun doReply(message: ReplyMessage, event: NudgeEvent) {
         if (message.message.startsWith("#")) {
             when {
                 // 戳回去
-                RegexMatches.main(message.message) -> {
+                message.message.startsWith("#nudge") -> {
                     event.from.nudge().sendTo(event.subject)
-                    val messageTemp = message.message.substring(6)
-                    sendRecordMessage(event.subject, messageTemp.deserializeMiraiCode())
+                    if (message.message.length > 6) {
+                        val messageTemp = message.message.substring(6)
+                        sendRecordMessage(event.subject, messageTemp.deserializeMiraiCode())
+                    }
                     logger.info("已尝试戳回发送者")
                 }
 
                 // 禁言
-               /* message.message.startsWith("#group.mute:") -> {
+                message.message.startsWith("#group.mute:") -> {
                     val duration = message.message.substringAfter(':').toIntOrNull()
                     if (duration == null) {
                         logger.warning("戳一戳禁言失败：\"${message.message}\" 格式不正确")
@@ -119,13 +153,13 @@ object JNudgeReply : KotlinPlugin(
                             logger.warning("戳一戳禁言失败", e)
                         }
                     }
-                }*/
+                }
 
                 // 忽略
-                /* message.message == "#ignore" -> {
+                message.message == "#ignore" -> {
                     logger.info("已忽略本次戳一戳回复")
                 }
-                */
+
                 // 其它
                 else -> sendRecordMessage(event.subject, message.message.deserializeMiraiCode())
             }
@@ -153,13 +187,5 @@ object JNudgeReply : KotlinPlugin(
             }
         }
         subject.sendMessage(message)
-    }
-
-    object RegexMatches {
-        @JvmStatic
-        fun main(args: String): Boolean {
-            val regex = "#nudge".toRegex()
-            return regex.containsMatchIn(input = args)
-        }
     }
 }
